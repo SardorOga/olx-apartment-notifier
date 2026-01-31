@@ -194,15 +194,6 @@ class OLXScraper:
                 logger.warning(f"JSON-LD parse error: {e}")
                 continue
 
-        # Har bir e'lonning batafsil sahifasidan qo'shimcha ma'lumot
-        for listing in listings[:10]:  # Birinchi 10 ta
-            try:
-                details = self.fetch_listing_details(listing['url'])
-                listing['details'] = details
-                time.sleep(0.3)  # Rate limiting
-            except Exception as e:
-                logger.warning(f"Detail fetch error: {e}")
-
         logger.info(f"{len(listings)} ta e'lon topildi")
         return listings
 
@@ -423,6 +414,14 @@ def check_all_urls():
                 listings = scraper.fetch_listings(url)
                 for listing in listings:
                     if not is_seen(listing['id']):
+                        # Yangi e'lon! Batafsil ma'lumot olish
+                        try:
+                            details = scraper.fetch_listing_details(listing['url'])
+                            listing['details'] = details
+                        except Exception as e:
+                            logger.warning(f"Detail fetch error: {e}")
+                            listing['details'] = []
+
                         # Xabar tuzish
                         lines = [
                             f"🆕 <b>Yangi e'lon!</b>\n",
