@@ -1,0 +1,23 @@
+# Config (shaxsiy ma'lumotlar)
+config.json
+
+# Database
+*.db
+
+# Logs
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

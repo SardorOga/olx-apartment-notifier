@@ -1,0 +1,14 @@
+{
+    "telegram": {
+        "bot_token": "YOUR_BOT_TOKEN_HERE",
+        "chat_id": "YOUR_CHAT_ID_HERE"
+    },
+    "filters": {
+        "city": "tashkent",
+        "min_price": 50000,
+        "max_price": 150000,
+        "min_rooms": 2,
+        "max_rooms": 4
+    },
+    "check_interval": 300
+}
