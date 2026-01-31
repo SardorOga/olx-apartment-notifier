@@ -233,13 +233,16 @@ def send_telegram(chat_id: str, text: str, reply_markup: dict = None) -> bool:
 
 
 def get_webapp_button():
-    """Get Mini App button."""
-    return {
-        "inline_keyboard": [[{
-            "text": "🏠 Filterlarni boshqarish",
-            "web_app": {"url": WEBAPP_URL}
-        }]]
-    }
+    """Get Mini App button or instructions if no HTTPS."""
+    # Mini App requires HTTPS
+    if WEBAPP_URL and WEBAPP_URL.startswith("https://"):
+        return {
+            "inline_keyboard": [[{
+                "text": "🏠 Filterlarni boshqarish",
+                "web_app": {"url": WEBAPP_URL}
+            }]]
+        }
+    return None
 
 
 # ============== API Routes ==============
@@ -307,6 +310,7 @@ def api_remove_filter(filter_id):
 def webhook():
     """Telegram webhook handler."""
     data = request.json
+    logger.info(f"Webhook received: {data}")
 
     if 'message' in data:
         message = data['message']
@@ -314,31 +318,87 @@ def webhook():
         text = message.get('text', '')
 
         if text == '/start':
-            send_telegram(
-                chat_id,
-                "🏠 <b>OLX Kvartira Kuzatuvchi</b>\n\n"
-                "Men OLX.uz'dagi kvartira e'lonlarini kuzataman.\n\n"
-                "Quyidagi tugmani bosib, filterlarni boshqaring:",
-                get_webapp_button()
-            )
+            webapp_btn = get_webapp_button()
+            if webapp_btn:
+                send_telegram(
+                    chat_id,
+                    "🏠 <b>OLX Kvartira Kuzatuvchi</b>\n\n"
+                    "Men OLX.uz'dagi kvartira e'lonlarini kuzataman.\n\n"
+                    "Quyidagi tugmani bosib, filterlarni boshqaring:",
+                    webapp_btn
+                )
+            else:
+                send_telegram(
+                    chat_id,
+                    "🏠 <b>OLX Kvartira Kuzatuvchi</b>\n\n"
+                    "Men OLX.uz'dagi kvartira e'lonlarini kuzataman.\n\n"
+                    "<b>Buyruqlar:</b>\n"
+                    "/add [url] - Filter qo'shish\n"
+                    "/list - Filterlar ro'yxati\n"
+                    "/remove [id] - Filter o'chirish\n\n"
+                    "OLX.uz dan URL yuborishingiz ham mumkin!"
+                )
         elif text == '/help':
             send_telegram(
                 chat_id,
                 "📖 <b>Yordam</b>\n\n"
-                "1. Tugmani bosing va Mini App'ni oching\n"
-                "2. OLX.uz dan filter URL'ini qo'shing\n"
-                "3. Yangi e'lonlar haqida avtomatik xabar olasiz\n\n"
-                "Har 1 daqiqada tekshiriladi.",
-                get_webapp_button()
+                "<b>Filter qo'shish:</b>\n"
+                "1. OLX.uz saytida filterlarni tanlang\n"
+                "2. URL'ni nusxalang\n"
+                "3. /add [url] yoki to'g'ridan-to'g'ri URL yuboring\n\n"
+                "<b>Buyruqlar:</b>\n"
+                "/add [url] - Filter qo'shish\n"
+                "/list - Filterlar ro'yxati\n"
+                "/remove [id] - Filter o'chirish\n\n"
+                "Har 1 daqiqada tekshiriladi."
             )
-        elif text == '/filters':
-            send_telegram(chat_id, "Filterlarni ko'rish uchun:", get_webapp_button())
-        else:
-            send_telegram(
-                chat_id,
-                "Filterlarni boshqarish uchun quyidagi tugmani bosing:",
-                get_webapp_button()
-            )
+        elif text == '/list':
+            filters = get_filters(chat_id)
+            if filters:
+                msg = "📋 <b>Sizning filterlaringiz:</b>\n\n"
+                for f in filters:
+                    short_url = f['url'][:50] + "..." if len(f['url']) > 50 else f['url']
+                    name = f['name'] or f"Filter #{f['id']}"
+                    msg += f"<b>ID: {f['id']}</b> - {name}\n{short_url}\n\n"
+                msg += "O'chirish: /remove [id]"
+                send_telegram(chat_id, msg)
+            else:
+                send_telegram(chat_id, "📭 Hozircha filter yo'q.\n\nOLX.uz dan URL yuboring.")
+        elif text.startswith('/add '):
+            url = text[5:].strip()
+            if url.startswith("https://www.olx.uz"):
+                result = add_filter(chat_id, url)
+                if result["success"]:
+                    # Mark existing as seen
+                    listings = scraper.fetch_listings(url)
+                    for listing in listings:
+                        mark_seen(listing['id'], listing['title'], listing['price'], listing['url'])
+                    send_telegram(chat_id, "✅ Filter qo'shildi!\n\nYangi e'lonlar haqida xabar beraman.")
+                else:
+                    send_telegram(chat_id, f"⚠️ {result.get('error', 'Xatolik')}")
+            else:
+                send_telegram(chat_id, "❌ Faqat OLX.uz havolalari qabul qilinadi.")
+        elif text.startswith('/remove '):
+            try:
+                filter_id = int(text[8:].strip())
+                if remove_filter(chat_id, filter_id):
+                    send_telegram(chat_id, "✅ Filter o'chirildi.")
+                else:
+                    send_telegram(chat_id, "❌ Filter topilmadi.")
+            except ValueError:
+                send_telegram(chat_id, "❌ Noto'g'ri ID. /list bilan tekshiring.")
+        elif text.startswith("https://www.olx.uz"):
+            # Direct URL
+            result = add_filter(chat_id, text.strip())
+            if result["success"]:
+                listings = scraper.fetch_listings(text.strip())
+                for listing in listings:
+                    mark_seen(listing['id'], listing['title'], listing['price'], listing['url'])
+                send_telegram(chat_id, "✅ Filter qo'shildi!\n\nYangi e'lonlar haqida xabar beraman.")
+            else:
+                send_telegram(chat_id, f"⚠️ {result.get('error', 'Xatolik')}")
+        elif not text.startswith('/'):
+            send_telegram(chat_id, "❓ Noma'lum buyruq.\n\n/help - yordam")
 
     return jsonify({"ok": True})
 
@@ -404,13 +464,17 @@ def setup_webhook():
             logger.error(f"Webhook setup error: {e}")
 
 
-if __name__ == '__main__':
-    init_db()
-    setup_webhook()
-
-    # Start background checker
+def start_checker():
+    """Start background checker thread."""
     checker_thread = threading.Thread(target=checker_loop, daemon=True)
     checker_thread.start()
 
-    # Run Flask
+
+# Initialize on module load (for gunicorn)
+init_db()
+setup_webhook()
+start_checker()
+
+
+if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000)
