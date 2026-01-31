@@ -24,7 +24,7 @@ jobs:
 
             # Install dependencies
             apt-get update -qq
-            apt-get install -y python3 python3-pip python3-venv nginx -qq
+            apt-get install -y python3 python3-pip python3-venv -qq
 
             # Setup directory
             mkdir -p /opt/olx-bot
@@ -34,16 +34,17 @@ jobs:
             if [ ! -d ".git" ]; then
               git clone https://github.com/SardorOga/olx-apartment-notifier.git .
             else
-              git pull origin main
+              git fetch origin
+              git reset --hard origin/main
             fi
 
             # Setup virtual environment
             python3 -m venv venv
             source venv/bin/activate
-            pip install -r requirements.txt -q
+            pip install requests beautifulsoup4 -q
 
             # Create systemd service
-            cat > /etc/systemd/system/olx-bot.service << 'EOF'
+            cat > /etc/systemd/system/olx-bot.service << EOF
             [Unit]
             Description=OLX Apartment Notifier Bot
             After=network.target
@@ -53,8 +54,7 @@ jobs:
             User=root
             WorkingDirectory=/opt/olx-bot
             Environment="TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}"
-            Environment="WEBAPP_URL=${{ secrets.WEBAPP_URL }}"
-            ExecStart=/opt/olx-bot/venv/bin/gunicorn -w 2 -b 127.0.0.1:8000 bot:app
+            ExecStart=/opt/olx-bot/venv/bin/python3 /opt/olx-bot/bot.py
             Restart=always
             RestartSec=10
 
@@ -62,34 +62,11 @@ jobs:
             WantedBy=multi-user.target
             EOF
 
-            # Setup Nginx
-            cat > /etc/nginx/sites-available/olx-bot << 'NGINXEOF'
-            server {
-                listen 80;
-                server_name ${{ secrets.SSH_HOST }};
-
-                location / {
-                    proxy_pass http://127.0.0.1:8000;
-                    proxy_http_version 1.1;
-                    proxy_set_header Upgrade $http_upgrade;
-                    proxy_set_header Connection 'upgrade';
-                    proxy_set_header Host $host;
-                    proxy_set_header X-Real-IP $remote_addr;
-                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                    proxy_cache_bypass $http_upgrade;
-                }
-            }
-            NGINXEOF
-
-            # Enable nginx site
-            ln -sf /etc/nginx/sites-available/olx-bot /etc/nginx/sites-enabled/
-            rm -f /etc/nginx/sites-enabled/default
-            nginx -t && systemctl restart nginx
-
-            # Start service
+            # Restart service
             systemctl daemon-reload
             systemctl enable olx-bot
             systemctl restart olx-bot
 
-            echo "Deploy completed!"
+            sleep 3
+            echo "=== Deploy completed ==="
             systemctl status olx-bot --no-pager || true
