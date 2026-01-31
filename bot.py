@@ -13,6 +13,7 @@ import time
 import logging
 from typing import Optional, List
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from bs4 import BeautifulSoup
@@ -397,55 +398,78 @@ def polling_loop():
 
 # ============== Checker ==============
 
+def process_single_filter(chat_id: str, url: str):
+    """Bitta filterni tekshirish (parallel uchun)."""
+    try:
+        listings = scraper.fetch_listings(url)
+        new_count = 0
+
+        for listing in listings:
+            if not is_seen(listing['id']):
+                # Yangi e'lon! Batafsil ma'lumot olish
+                try:
+                    details = scraper.fetch_listing_details(listing['url'])
+                    listing['details'] = details
+                except Exception as e:
+                    logger.warning(f"Detail fetch error: {e}")
+                    listing['details'] = []
+
+                # Xabar tuzish
+                lines = [
+                    f"🆕 <b>Yangi e'lon!</b>\n",
+                    f"<b>{listing['title']}</b>\n",
+                    f"💰 {listing['price']}"
+                ]
+
+                if listing.get('location'):
+                    lines.append(f"📍 {listing['location']}")
+
+                # Qo'shimcha ma'lumotlar
+                if listing.get('details'):
+                    lines.append("")  # Bo'sh qator
+                    for detail in listing['details'][:6]:
+                        lines.append(f"• {detail}")
+
+                lines.append(f"\n🔗 <a href=\"{listing['url']}\">E'lonni ko'rish</a>")
+                message = "\n".join(lines)
+                send_telegram(chat_id, message)
+                mark_seen(listing['id'], listing['title'], listing['price'], listing['url'])
+                new_count += 1
+                time.sleep(0.3)
+
+        return new_count
+    except Exception as e:
+        logger.error(f"Check error for {url}: {e}")
+        return 0
+
+
 def check_all_urls():
-    """Check all URLs for new listings."""
+    """Check all URLs for new listings (parallel)."""
     filters = get_all_filters()
 
-    chat_urls = {}
-    for f in filters:
-        chat_id = f['chat_id']
-        if chat_id not in chat_urls:
-            chat_urls[chat_id] = []
-        chat_urls[chat_id].append(f['url'])
+    if not filters:
+        return
 
-    for chat_id, urls in chat_urls.items():
-        for url in urls:
+    # Parallel tekshirish (max 10 ta thread)
+    max_workers = min(10, len(filters))
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {}
+        for f in filters:
+            future = executor.submit(process_single_filter, f['chat_id'], f['url'])
+            futures[future] = f['url']
+
+        total_new = 0
+        for future in as_completed(futures):
+            url = futures[future]
             try:
-                listings = scraper.fetch_listings(url)
-                for listing in listings:
-                    if not is_seen(listing['id']):
-                        # Yangi e'lon! Batafsil ma'lumot olish
-                        try:
-                            details = scraper.fetch_listing_details(listing['url'])
-                            listing['details'] = details
-                        except Exception as e:
-                            logger.warning(f"Detail fetch error: {e}")
-                            listing['details'] = []
-
-                        # Xabar tuzish
-                        lines = [
-                            f"🆕 <b>Yangi e'lon!</b>\n",
-                            f"<b>{listing['title']}</b>\n",
-                            f"💰 {listing['price']}"
-                        ]
-
-                        if listing.get('location'):
-                            lines.append(f"📍 {listing['location']}")
-
-                        # Qo'shimcha ma'lumotlar
-                        if listing.get('details'):
-                            lines.append("")  # Bo'sh qator
-                            for detail in listing['details'][:6]:
-                                lines.append(f"• {detail}")
-
-                        lines.append(f"\n🔗 <a href=\"{listing['url']}\">E'lonni ko'rish</a>")
-                        message = "\n".join(lines)
-                        send_telegram(chat_id, message)
-                        mark_seen(listing['id'], listing['title'], listing['price'], listing['url'])
-                        time.sleep(0.5)
+                count = future.result()
+                total_new += count
             except Exception as e:
-                logger.error(f"Check error: {e}")
-            time.sleep(1)
+                logger.error(f"Future error for {url}: {e}")
+
+    if total_new > 0:
+        logger.info(f"Jami {total_new} ta yangi e'lon topildi")
 
 
 def checker_loop():
