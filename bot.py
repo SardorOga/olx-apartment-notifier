@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OLX.uz kvartira e'lonlarini kuzatuvchi Telegram bot.
+OLX.uz e'lonlarini kuzatuvchi Telegram bot.
 Polling mode - HTTPS talab qilmaydi.
 """
 
@@ -216,8 +216,8 @@ def handle_message(chat_id: str, text: str):
     if text == '/start':
         send_telegram(
             chat_id,
-            "🏠 <b>OLX Kvartira Kuzatuvchi</b>\n\n"
-            "Men OLX.uz'dagi kvartira e'lonlarini kuzataman va yangi e'lonlar haqida xabar beraman.\n\n"
+            "🔍 <b>OLX Kuzatuvchi</b>\n\n"
+            "Men OLX.uz'dagi e'lonlarni kuzataman va yangilari haqida xabar beraman.\n\n"
             "<b>Buyruqlar:</b>\n"
             "/add [url] - Filter qo'shish\n"
             "/list - Filterlar ro'yxati\n"
@@ -348,7 +348,7 @@ def check_all_urls():
                 for listing in listings:
                     if not is_seen(listing['id']):
                         message = (
-                            f"🏠 <b>Yangi e'lon!</b>\n\n"
+                            f"🆕 <b>Yangi e'lon!</b>\n\n"
                             f"<b>{listing['title']}</b>\n\n"
                             f"💰 {listing['price']}\n"
                             f"📍 {listing['location']}\n\n"
