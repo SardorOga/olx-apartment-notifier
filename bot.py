@@ -6,6 +6,7 @@ Polling mode - HTTPS talab qilmaydi.
 
 import os
 import re
+import json
 import sqlite3
 import threading
 import time
@@ -148,7 +149,30 @@ class OLXScraper:
         soup = BeautifulSoup(response.text, 'html.parser')
         listings = []
 
-        cards = soup.select('[data-cy="l-card"]') or soup.select('.offer-wrapper')
+        # JSON-LD dan ma'lumotlarni olish
+        json_ld_data = {}
+        for script in soup.select('script[type="application/ld+json"]'):
+            try:
+                data = json.loads(script.string)
+                if isinstance(data, dict) and data.get('@type') == 'ItemList':
+                    for item in data.get('itemListElement', []):
+                        offer = item.get('item', {})
+                        if offer.get('@type') == 'Offer':
+                            url = offer.get('url', '')
+                            listing_id = self.extract_listing_id(url)
+                            if listing_id:
+                                json_ld_data[listing_id] = {
+                                    'title': offer.get('name', ''),
+                                    'price': offer.get('price', ''),
+                                    'currency': offer.get('priceCurrency', 'UZS'),
+                                    'location': offer.get('areaServed', {}).get('name', ''),
+                                    'url': url
+                                }
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        # HTML kartalardan qo'shimcha ma'lumot
+        cards = soup.select('[data-cy="l-card"]')
 
         for card in cards:
             try:
@@ -164,40 +188,46 @@ class OLXScraper:
                 if not listing_id:
                     continue
 
-                # Title - yangi struktura
-                title_elem = card.select_one('[data-testid="offer_title"]') or card.select_one('[data-cy="offer_title"]') or card.select_one('h6')
-                title = title_elem.get_text(strip=True) if title_elem else "Sarlavhasiz"
+                # JSON-LD dan ma'lumot
+                ld_info = json_ld_data.get(listing_id, {})
+
+                # Title
+                title = ld_info.get('title', '')
+                if not title:
+                    title_elem = card.select_one('h6') or card.select_one('[data-cy="ad-card-title"]')
+                    title = title_elem.get_text(strip=True) if title_elem else ""
 
                 # Price
-                price_elem = card.select_one('[data-testid="ad-price"]')
-                price = price_elem.get_text(strip=True) if price_elem else "Narx ko'rsatilmagan"
+                price = ""
+                if ld_info.get('price'):
+                    price = f"{int(float(ld_info['price'])):,} {ld_info.get('currency', 'UZS')}".replace(',', ' ')
+                else:
+                    price_elem = card.select_one('[data-testid="ad-price"]')
+                    price = price_elem.get_text(strip=True) if price_elem else ""
 
-                # Location
-                location_elem = card.select_one('[data-testid="location-date"]')
-                location = location_elem.get_text(strip=True) if location_elem else ""
+                # Location (JSON-LD dan)
+                location = ld_info.get('location', '')
 
-                # Местоположение (joylashuv)
-                mesto_elem = card.select_one('[data-testid="adCard-location"]') or card.select_one('[aria-label*="Местоположение"]')
-                mesto = mesto_elem.get_text(strip=True) if mesto_elem else ""
+                # Sana va joylashuv (HTML dan)
+                location_date_elem = card.select_one('[data-testid="location-date"]')
+                location_date = location_date_elem.get_text(strip=True) if location_date_elem else ""
 
-                # Qo'shimcha ma'lumotlar (ListContainer ichidan)
+                # Barcha p elementlardan qo'shimcha ma'lumot
                 details = []
-                list_container = card.select_one('[data-nx-name="ListContainer"]')
-                if list_container:
-                    detail_items = list_container.select('p, span, div')
-                    for item in detail_items:
-                        text = item.get_text(strip=True)
-                        if text and text not in details and len(text) < 50:
+                for p in card.select('p'):
+                    text = p.get_text(strip=True)
+                    if text and len(text) < 100 and text != title and text != price:
+                        if text not in details:
                             details.append(text)
 
                 listings.append({
                     "id": listing_id,
-                    "title": title,
-                    "price": price,
+                    "title": title or "Sarlavhasiz",
+                    "price": price or "Narx ko'rsatilmagan",
                     "url": href,
                     "location": location,
-                    "mesto": mesto,
-                    "details": details[:5]  # Max 5 ta detail
+                    "location_date": location_date,
+                    "details": details[:5]
                 })
             except Exception as e:
                 logger.warning(f"Parse error: {e}")
@@ -373,23 +403,23 @@ def check_all_urls():
                 listings = scraper.fetch_listings(url)
                 for listing in listings:
                     if not is_seen(listing['id']):
-                        details_text = ""
+                        # Xabar tuzish
+                        lines = [f"🆕 <b>Yangi e'lon!</b>\n"]
+                        lines.append(f"<b>{listing['title']}</b>\n")
+                        lines.append(f"💰 {listing['price']}")
+
+                        if listing.get('location'):
+                            lines.append(f"📍 {listing['location']}")
+
+                        if listing.get('location_date'):
+                            lines.append(f"🕐 {listing['location_date']}")
+
                         if listing.get('details'):
-                            details_text = "📋 " + " • ".join(listing['details']) + "\n"
+                            lines.append(f"📋 {' • '.join(listing['details'])}")
 
-                        mesto_text = ""
-                        if listing.get('mesto'):
-                            mesto_text = f"🏠 {listing['mesto']}\n"
+                        lines.append(f"\n🔗 <a href=\"{listing['url']}\">E'lonni ko'rish</a>")
 
-                        message = (
-                            f"🆕 <b>Yangi e'lon!</b>\n\n"
-                            f"<b>{listing['title']}</b>\n\n"
-                            f"💰 {listing['price']}\n"
-                            f"📍 {listing['location']}\n"
-                            f"{mesto_text}"
-                            f"{details_text}\n"
-                            f"🔗 <a href=\"{listing['url']}\">E'lonni ko'rish</a>"
-                        )
+                        message = "\n".join(lines)
                         send_telegram(chat_id, message)
                         mark_seen(listing['id'], listing['title'], listing['price'], listing['url'])
                         time.sleep(0.5)
