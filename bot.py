@@ -149,111 +149,52 @@ class OLXScraper:
         soup = BeautifulSoup(response.text, 'html.parser')
         listings = []
 
-        # JSON-LD dan ma'lumotlarni olish
-        json_ld_data = {}
+        # JSON-LD dan ma'lumotlarni olish (asosiy manba)
         for script in soup.select('script[type="application/ld+json"]'):
             try:
                 data = json.loads(script.string)
+
+                # ItemList strukturasi
                 if isinstance(data, dict) and data.get('@type') == 'ItemList':
                     for item in data.get('itemListElement', []):
                         offer = item.get('item', {})
                         if offer.get('@type') == 'Offer':
                             url = offer.get('url', '')
                             listing_id = self.extract_listing_id(url)
+
                             if listing_id:
-                                json_ld_data[listing_id] = {
-                                    'title': offer.get('name', ''),
-                                    'price': offer.get('price', ''),
-                                    'currency': offer.get('priceCurrency', 'UZS'),
-                                    'location': offer.get('areaServed', {}).get('name', ''),
-                                    'url': url
-                                }
-            except (json.JSONDecodeError, TypeError):
+                                # Narxni formatlash
+                                price_raw = offer.get('price', 0)
+                                currency = offer.get('priceCurrency', 'UZS')
+                                if price_raw:
+                                    try:
+                                        price_num = int(float(price_raw))
+                                        price = f"{price_num:,}".replace(',', ' ') + f" {currency}"
+                                    except:
+                                        price = "Kelishiladi"
+                                else:
+                                    price = "Kelishiladi"
+
+                                # Joylashuv
+                                area_served = offer.get('areaServed', {})
+                                if isinstance(area_served, dict):
+                                    location = area_served.get('name', '')
+                                else:
+                                    location = str(area_served) if area_served else ''
+
+                                listings.append({
+                                    "id": listing_id,
+                                    "title": offer.get('name', 'E\'lon'),
+                                    "price": price,
+                                    "url": url,
+                                    "location": location
+                                })
+
+            except (json.JSONDecodeError, TypeError, KeyError) as e:
+                logger.warning(f"JSON-LD parse error: {e}")
                 continue
 
-        # HTML kartalardan ma'lumot
-        cards = soup.select('[data-cy="l-card"]')
-
-        for card in cards:
-            try:
-                link_elem = card.select_one('a[href*="/d/"]')
-                if not link_elem:
-                    continue
-
-                href = link_elem.get('href', '')
-                if not href.startswith('http'):
-                    href = BASE_URL + href
-
-                listing_id = self.extract_listing_id(href)
-                if not listing_id:
-                    continue
-
-                # JSON-LD dan ma'lumot
-                ld_info = json_ld_data.get(listing_id, {})
-
-                # Rasm tagidagi div (img dan keyingi konteyner)
-                img_elem = card.select_one('img')
-                content_div = None
-                if img_elem:
-                    # Rasmni o'z ichiga olgan div'ni topib, uning keyingi sibling'ini olamiz
-                    parent = img_elem.parent
-                    while parent and parent != card:
-                        next_sib = parent.find_next_sibling()
-                        if next_sib:
-                            content_div = next_sib
-                            break
-                        parent = parent.parent
-
-                # Agar content_div topilmasa, kartaning o'zidan olamiz
-                if not content_div:
-                    content_div = card
-
-                # Barcha matnlarni yig'ish
-                all_texts = []
-                for elem in content_div.find_all(['p', 'span', 'h6', 'div']):
-                    text = elem.get_text(strip=True)
-                    # Bo'sh emas, takrorlanmagan, qisqa
-                    if text and text not in all_texts and 2 < len(text) < 150:
-                        all_texts.append(text)
-
-                # Title - birinchi uzun matn yoki JSON-LD dan
-                title = ld_info.get('title', '')
-                if not title and all_texts:
-                    for t in all_texts:
-                        if len(t) > 10:
-                            title = t
-                            break
-
-                # Price - narx formatidagi matn
-                price = ""
-                if ld_info.get('price'):
-                    price = f"{int(float(ld_info['price'])):,} {ld_info.get('currency', 'UZS')}".replace(',', ' ')
-                else:
-                    for t in all_texts:
-                        if any(c in t.lower() for c in ['сум', 'usd', 'y.e', '$', 'у.е']):
-                            price = t
-                            break
-
-                # Location (JSON-LD dan)
-                location = ld_info.get('location', '')
-
-                # Qolgan ma'lumotlar (title va price dan tashqari)
-                details = []
-                for t in all_texts:
-                    if t != title and t != price and t not in details:
-                        details.append(t)
-
-                listings.append({
-                    "id": listing_id,
-                    "title": title or "E'lon",
-                    "price": price or "Kelishiladi",
-                    "url": href,
-                    "location": location,
-                    "details": details[:6]
-                })
-            except Exception as e:
-                logger.warning(f"Parse error: {e}")
-
+        logger.info(f"JSON-LD dan {len(listings)} ta e'lon topildi")
         return listings
 
 
@@ -426,21 +367,13 @@ def check_all_urls():
                 for listing in listings:
                     if not is_seen(listing['id']):
                         # Xabar tuzish
-                        lines = [f"🆕 <b>Yangi e'lon!</b>\n"]
-                        lines.append(f"<b>{listing['title']}</b>\n")
-                        lines.append(f"💰 {listing['price']}")
-
-                        if listing.get('location'):
-                            lines.append(f"📍 {listing['location']}")
-
-                        # Qo'shimcha ma'lumotlar alohida qatorlarda
-                        if listing.get('details'):
-                            for detail in listing['details']:
-                                lines.append(f"• {detail}")
-
-                        lines.append(f"\n🔗 <a href=\"{listing['url']}\">E'lonni ko'rish</a>")
-
-                        message = "\n".join(lines)
+                        message = (
+                            f"🆕 <b>Yangi e'lon!</b>\n\n"
+                            f"<b>{listing['title']}</b>\n\n"
+                            f"💰 {listing['price']}\n"
+                            f"📍 {listing.get('location', '')}\n\n"
+                            f"🔗 <a href=\"{listing['url']}\">E'lonni ko'rish</a>"
+                        )
                         send_telegram(chat_id, message)
                         mark_seen(listing['id'], listing['title'], listing['price'], listing['url'])
                         time.sleep(0.5)
