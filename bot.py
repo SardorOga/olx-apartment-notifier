@@ -149,12 +149,11 @@ class OLXScraper:
         soup = BeautifulSoup(response.text, 'html.parser')
         listings = []
 
-        # JSON-LD dan ma'lumotlarni olish (asosiy manba)
+        # JSON-LD dan asosiy ma'lumotlarni olish
         for script in soup.select('script[type="application/ld+json"]'):
             try:
                 data = json.loads(script.string)
 
-                # ItemList strukturasi
                 if isinstance(data, dict) and data.get('@type') == 'ItemList':
                     for item in data.get('itemListElement', []):
                         offer = item.get('item', {})
@@ -187,15 +186,73 @@ class OLXScraper:
                                     "title": offer.get('name', 'E\'lon'),
                                     "price": price,
                                     "url": url,
-                                    "location": location
+                                    "location": location,
+                                    "details": []
                                 })
 
             except (json.JSONDecodeError, TypeError, KeyError) as e:
                 logger.warning(f"JSON-LD parse error: {e}")
                 continue
 
-        logger.info(f"JSON-LD dan {len(listings)} ta e'lon topildi")
+        # Har bir e'lonning batafsil sahifasidan qo'shimcha ma'lumot
+        for listing in listings[:10]:  # Birinchi 10 ta
+            try:
+                details = self.fetch_listing_details(listing['url'])
+                listing['details'] = details
+                time.sleep(0.3)  # Rate limiting
+            except Exception as e:
+                logger.warning(f"Detail fetch error: {e}")
+
+        logger.info(f"{len(listings)} ta e'lon topildi")
         return listings
+
+    def fetch_listing_details(self, url: str) -> list:
+        """E'lonning batafsil sahifasidan qo'shimcha ma'lumotlarni olish."""
+        try:
+            response = self.session.get(url, timeout=15)
+            response.raise_for_status()
+        except:
+            return []
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+        details = []
+
+        # JSON-LD dan Product ma'lumotlari
+        for script in soup.select('script[type="application/ld+json"]'):
+            try:
+                data = json.loads(script.string)
+                if isinstance(data, dict) and data.get('@type') == 'Product':
+                    # Description
+                    desc = data.get('description', '')
+                    if desc:
+                        # Qisqartirish
+                        desc = desc[:200] + '...' if len(desc) > 200 else desc
+                        details.append(desc)
+            except:
+                continue
+
+        # HTML dan parametrlarni olish
+        # li elementlardan
+        for li in soup.select('li[data-testid]'):
+            text = li.get_text(strip=True)
+            if text and len(text) < 100:
+                details.append(text)
+
+        # p elementlardan (parametr nomlari bilan)
+        for p in soup.select('p'):
+            text = p.get_text(strip=True)
+            if ':' in text and len(text) < 80:
+                details.append(text)
+
+        # Takrorlarni olib tashlash
+        seen = set()
+        unique_details = []
+        for d in details:
+            if d not in seen:
+                seen.add(d)
+                unique_details.append(d)
+
+        return unique_details[:8]
 
 
 scraper = OLXScraper()
@@ -367,13 +424,23 @@ def check_all_urls():
                 for listing in listings:
                     if not is_seen(listing['id']):
                         # Xabar tuzish
-                        message = (
-                            f"🆕 <b>Yangi e'lon!</b>\n\n"
-                            f"<b>{listing['title']}</b>\n\n"
-                            f"💰 {listing['price']}\n"
-                            f"📍 {listing.get('location', '')}\n\n"
-                            f"🔗 <a href=\"{listing['url']}\">E'lonni ko'rish</a>"
-                        )
+                        lines = [
+                            f"🆕 <b>Yangi e'lon!</b>\n",
+                            f"<b>{listing['title']}</b>\n",
+                            f"💰 {listing['price']}"
+                        ]
+
+                        if listing.get('location'):
+                            lines.append(f"📍 {listing['location']}")
+
+                        # Qo'shimcha ma'lumotlar
+                        if listing.get('details'):
+                            lines.append("")  # Bo'sh qator
+                            for detail in listing['details'][:6]:
+                                lines.append(f"• {detail}")
+
+                        lines.append(f"\n🔗 <a href=\"{listing['url']}\">E'lonni ko'rish</a>")
+                        message = "\n".join(lines)
                         send_telegram(chat_id, message)
                         mark_seen(listing['id'], listing['title'], listing['price'], listing['url'])
                         time.sleep(0.5)
