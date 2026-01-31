@@ -31,7 +31,7 @@ BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 # Constants
 BASE_URL = "https://www.olx.uz"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-CHECK_INTERVAL = 60
+CHECK_INTERVAL = 180  # 3 daqiqa
 DB_PATH = "/opt/olx-bot/olx_bot.db"
 
 
