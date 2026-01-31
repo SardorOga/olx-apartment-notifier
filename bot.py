@@ -164,21 +164,40 @@ class OLXScraper:
                 if not listing_id:
                     continue
 
-                title_elem = card.select_one('h6')
+                # Title - yangi struktura
+                title_elem = card.select_one('[data-testid="offer_title"]') or card.select_one('[data-cy="offer_title"]') or card.select_one('h6')
                 title = title_elem.get_text(strip=True) if title_elem else "Sarlavhasiz"
 
+                # Price
                 price_elem = card.select_one('[data-testid="ad-price"]')
                 price = price_elem.get_text(strip=True) if price_elem else "Narx ko'rsatilmagan"
 
+                # Location
                 location_elem = card.select_one('[data-testid="location-date"]')
                 location = location_elem.get_text(strip=True) if location_elem else ""
+
+                # Местоположение (joylashuv)
+                mesto_elem = card.select_one('[data-testid="adCard-location"]') or card.select_one('[aria-label*="Местоположение"]')
+                mesto = mesto_elem.get_text(strip=True) if mesto_elem else ""
+
+                # Qo'shimcha ma'lumotlar (ListContainer ichidan)
+                details = []
+                list_container = card.select_one('[data-nx-name="ListContainer"]')
+                if list_container:
+                    detail_items = list_container.select('p, span, div')
+                    for item in detail_items:
+                        text = item.get_text(strip=True)
+                        if text and text not in details and len(text) < 50:
+                            details.append(text)
 
                 listings.append({
                     "id": listing_id,
                     "title": title,
                     "price": price,
                     "url": href,
-                    "location": location
+                    "location": location,
+                    "mesto": mesto,
+                    "details": details[:5]  # Max 5 ta detail
                 })
             except Exception as e:
                 logger.warning(f"Parse error: {e}")
@@ -354,11 +373,21 @@ def check_all_urls():
                 listings = scraper.fetch_listings(url)
                 for listing in listings:
                     if not is_seen(listing['id']):
+                        details_text = ""
+                        if listing.get('details'):
+                            details_text = "📋 " + " • ".join(listing['details']) + "\n"
+
+                        mesto_text = ""
+                        if listing.get('mesto'):
+                            mesto_text = f"🏠 {listing['mesto']}\n"
+
                         message = (
                             f"🆕 <b>Yangi e'lon!</b>\n\n"
                             f"<b>{listing['title']}</b>\n\n"
                             f"💰 {listing['price']}\n"
-                            f"📍 {listing['location']}\n\n"
+                            f"📍 {listing['location']}\n"
+                            f"{mesto_text}"
+                            f"{details_text}\n"
                             f"🔗 <a href=\"{listing['url']}\">E'lonni ko'rish</a>"
                         )
                         send_telegram(chat_id, message)
