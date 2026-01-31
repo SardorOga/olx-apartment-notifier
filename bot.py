@@ -255,19 +255,26 @@ def handle_message(chat_id: str, text: str):
         else:
             send_telegram(chat_id, "📭 Hozircha filter yo'q.\n\nOLX.uz dan URL yuboring.")
 
-    elif text.startswith('/add '):
-        url = text[5:].strip()
-        add_filter_url(chat_id, url)
+    elif text.startswith('/add'):
+        url = text[4:].strip()
+        if url:
+            add_filter_url(chat_id, url)
+        else:
+            send_telegram(chat_id, "❌ URL kiriting.\n\nMisol: /add https://www.olx.uz/...")
 
-    elif text.startswith('/remove '):
-        try:
-            filter_id = int(text[8:].strip())
-            if remove_filter(chat_id, filter_id):
-                send_telegram(chat_id, "✅ Filter o'chirildi.")
-            else:
-                send_telegram(chat_id, "❌ Filter topilmadi.")
-        except ValueError:
-            send_telegram(chat_id, "❌ Noto'g'ri ID.\n\n/list bilan tekshiring.")
+    elif text.startswith('/remove'):
+        id_str = text[7:].strip()
+        if not id_str:
+            send_telegram(chat_id, "❌ ID kiriting.\n\nMisol: /remove 1")
+        else:
+            try:
+                filter_id = int(id_str)
+                if remove_filter(chat_id, filter_id):
+                    send_telegram(chat_id, "✅ Filter o'chirildi.")
+                else:
+                    send_telegram(chat_id, "❌ Filter topilmadi.")
+            except ValueError:
+                send_telegram(chat_id, "❌ Noto'g'ri ID.\n\n/list bilan tekshiring.")
 
     elif text.startswith("https://www.olx.uz"):
         add_filter_url(chat_id, text)
