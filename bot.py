@@ -171,7 +171,7 @@ class OLXScraper:
             except (json.JSONDecodeError, TypeError):
                 continue
 
-        # HTML kartalardan qo'shimcha ma'lumot
+        # HTML kartalardan ma'lumot
         cards = soup.select('[data-cy="l-card"]')
 
         for card in cards:
@@ -191,43 +191,65 @@ class OLXScraper:
                 # JSON-LD dan ma'lumot
                 ld_info = json_ld_data.get(listing_id, {})
 
-                # Title
-                title = ld_info.get('title', '')
-                if not title:
-                    title_elem = card.select_one('h6') or card.select_one('[data-cy="ad-card-title"]')
-                    title = title_elem.get_text(strip=True) if title_elem else ""
+                # Rasm tagidagi div (img dan keyingi konteyner)
+                img_elem = card.select_one('img')
+                content_div = None
+                if img_elem:
+                    # Rasmni o'z ichiga olgan div'ni topib, uning keyingi sibling'ini olamiz
+                    parent = img_elem.parent
+                    while parent and parent != card:
+                        next_sib = parent.find_next_sibling()
+                        if next_sib:
+                            content_div = next_sib
+                            break
+                        parent = parent.parent
 
-                # Price
+                # Agar content_div topilmasa, kartaning o'zidan olamiz
+                if not content_div:
+                    content_div = card
+
+                # Barcha matnlarni yig'ish
+                all_texts = []
+                for elem in content_div.find_all(['p', 'span', 'h6', 'div']):
+                    text = elem.get_text(strip=True)
+                    # Bo'sh emas, takrorlanmagan, qisqa
+                    if text and text not in all_texts and 2 < len(text) < 150:
+                        all_texts.append(text)
+
+                # Title - birinchi uzun matn yoki JSON-LD dan
+                title = ld_info.get('title', '')
+                if not title and all_texts:
+                    for t in all_texts:
+                        if len(t) > 10:
+                            title = t
+                            break
+
+                # Price - narx formatidagi matn
                 price = ""
                 if ld_info.get('price'):
                     price = f"{int(float(ld_info['price'])):,} {ld_info.get('currency', 'UZS')}".replace(',', ' ')
                 else:
-                    price_elem = card.select_one('[data-testid="ad-price"]')
-                    price = price_elem.get_text(strip=True) if price_elem else ""
+                    for t in all_texts:
+                        if any(c in t.lower() for c in ['сум', 'usd', 'y.e', '$', 'у.е']):
+                            price = t
+                            break
 
                 # Location (JSON-LD dan)
                 location = ld_info.get('location', '')
 
-                # Sana va joylashuv (HTML dan)
-                location_date_elem = card.select_one('[data-testid="location-date"]')
-                location_date = location_date_elem.get_text(strip=True) if location_date_elem else ""
-
-                # Barcha p elementlardan qo'shimcha ma'lumot
+                # Qolgan ma'lumotlar (title va price dan tashqari)
                 details = []
-                for p in card.select('p'):
-                    text = p.get_text(strip=True)
-                    if text and len(text) < 100 and text != title and text != price:
-                        if text not in details:
-                            details.append(text)
+                for t in all_texts:
+                    if t != title and t != price and t not in details:
+                        details.append(t)
 
                 listings.append({
                     "id": listing_id,
-                    "title": title or "Sarlavhasiz",
-                    "price": price or "Narx ko'rsatilmagan",
+                    "title": title or "E'lon",
+                    "price": price or "Kelishiladi",
                     "url": href,
                     "location": location,
-                    "location_date": location_date,
-                    "details": details[:5]
+                    "details": details[:6]
                 })
             except Exception as e:
                 logger.warning(f"Parse error: {e}")
@@ -411,11 +433,10 @@ def check_all_urls():
                         if listing.get('location'):
                             lines.append(f"📍 {listing['location']}")
 
-                        if listing.get('location_date'):
-                            lines.append(f"🕐 {listing['location_date']}")
-
+                        # Qo'shimcha ma'lumotlar alohida qatorlarda
                         if listing.get('details'):
-                            lines.append(f"📋 {' • '.join(listing['details'])}")
+                            for detail in listing['details']:
+                                lines.append(f"• {detail}")
 
                         lines.append(f"\n🔗 <a href=\"{listing['url']}\">E'lonni ko'rish</a>")
 
